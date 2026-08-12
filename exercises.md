@@ -315,47 +315,67 @@ verbosity bias và self-preference bằng cách nào?
 Chỉ làm sau khi hoàn thành 3.1–3.3. Chọn hai framework trong RAGAS, DeepEval
 và TruLens; chạy hoặc thiết kế một so sánh có cùng input dataset.
 
-| Tiêu chí | Framework 1: ____ | Framework 2: ____ |
+**Method (same input):** `golden_dataset.json` + `artifacts/actual_answers.json` (20 Northstar QA). Same underlying word-overlap scores from this lab’s RAGAS-inspired core. Then apply each framework’s *usage pattern*:
+
+- **RAGAS-style:** continuous metrics + `passed` if Faithfulness, Relevance, Completeness all ≥ 0.5 (lab `run_full_eval`). Also report Context Recall / Precision.
+- **DeepEval-style:** pytest-native assertions using the CI thresholds from Exercise 1.3: `assert F ≥ 0.70`, `assert Rel ≥ 0.60`, `assert Comp ≥ 0.60`. A case fails the “test file” if any assertion fails.
+
+Production RAGAS/DeepEval would swap the heuristic for LLM judges; this comparison isolates **framework philosophy** (dashboard metrics vs unit-test gates) without confounding a second LLM run.
+
+| Tiêu chí | Framework 1: RAGAS (offline RAG metrics) | Framework 2: DeepEval (LLM unit testing) |
 |---|---|---|
-| Setup complexity | | |
-| Metrics available | | |
-| CI/CD integration | | |
-| Kết quả trên cùng dataset | | |
-| Insight rút ra | | |
+| Setup complexity | Higher for full RAGAS (`ragas` + datasets + judge LLM). Lab stand-in is one `RAGASEvaluator`. Natural fit: notebook / eval job on a golden set. | Lower in a pytest repo: `assert_test(test_case, [FaithfulnessMetric(), …])` next to unit tests. Thresholds are explicit in code. |
+| Metrics available | Faithfulness, Answer Relevancy, Context Recall, Context Precision (and variants). Retrieval-aware by design. | Faithfulness, AnswerRelevancy, Hallucination, GEval/custom rubric, plus pytest hooks. Retrieval metrics exist but are less central than RAGAS. |
+| CI/CD integration | Typical as a batch eval step that writes a report; gating needs extra scripting (`pass_rate`, regression). | Native: fail the CI job if any assertion fails. Matches `run_regression` + quality-gate lecture. |
+| Kết quả trên cùng dataset | Pass **13/20 = 65%**. Avg F 0.644, Rel 0.701, Comp 0.621, CR 0.883, CP 0.924. Failures: E03, E04, H01, H05, A01, A02, A03. | Pass **6/20 = 30%** (E01, E02, M02, M04, M05, M06). Assertion fails: F 11, Rel 5, Comp 9. Extra fails vs RAGAS: E05, M01, M03, M07, H02, H03, H04. |
+| Insight rút ra | RAGAS is the better **diagnostic** tool (CR/CP explain A01 vs A02). Soft 0.5 gate under-blocks borderline in-scope policy answers (M07 overall 0.55 still “passes”). | DeepEval is the better **release gate**. Same numbers, stricter thresholds → 8 additional fails, all still in the RAGAS fail set or just above 0.5. |
 
 - Scores có nhất quán không?
 - Framework nào strict hơn và vì sao?
 - Hai framework có tìm ra cùng failure cases không?
 
 > *Phân tích:*
+>
+> **Consistency:** Metric *values* are identical by construction. Pass/fail is **not** consistent: RAGAS 65% vs DeepEval 30%. Ranking of worst cases still agrees (A02 < A01 < A03 remain the bottom three under both).
+>
+> **Strictness:** **DeepEval is stricter.** RAGAS uses a 0.5 floor on three metrics (lab default). DeepEval uses the Student Services CI bar (F 0.70 / Rel 0.60 / Comp 0.60). Every RAGAS failure is also a DeepEval failure (`Only RAGAS = ∅`). DeepEval additionally fails E05 (F 0.692), M01 (F 0.679, Comp 0.571), M03 (Comp 0.591), M07 (F 0.500, Comp 0.545), H02 (F 0.587), H03 (F 0.509), H04 (F 0.541) — mostly in-scope answers that are “OK-ish” under RAGAS but unsafe as a tuition/deadline gate.
+>
+> **Same failures?** Core overlap: **E03, E04, H01, H05, A01, A02, A03**. DeepEval is a superset. Neither framework’s overlap heuristic correctly labels A01/A02 as *safety refuses*; both call them Faithfulness failures. A production DeepEval GEval using Exercise 3.3’s Safety dimension would split those from E03-style incompleteness; RAGAS Context Recall already explains A01 (0.0) vs A02 (0.95).
+>
+> **When to use which:** RAGAS offline job after each RAG change (watch CR/CP + generation). DeepEval assertions in CI to **block deploy**. TruLens would be the third layer (online traces / feedback functions on live portal traffic) — not run here. Recommended stack: RAGAS diagnose → DeepEval gate → TruLens monitor.
 
 ### Exercise 3.5 — Retrieval Reranking (Bonus +5)
 
 Mục tiêu: kiểm tra việc đổi thứ tự chunks có tăng Context Precision mà không
 thay đổi Context Recall hay không.
 
-1. Chọn ít nhất 5 cases từ `artifacts/actual_answers.json`.
-2. Tính Context Recall và Context Precision trước rerank.
-3. Implement `rerank_by_overlap()` hoặc một reranker khác.
-4. Rerank cùng tập chunks, không thêm hoặc xóa chunk.
-5. Tính lại hai metrics và giải thích kết quả.
+Implemented `rerank_by_overlap()` in `template.py` / `solution/solution.py` (sort chunks by `_tokenize` overlap with the **question**, no gold leakage). Same top-5 set, only order changes. Metrics vs **expected_answer**. `pytest tests/ -v` → **42 passed** (bonus test no longer skipped).
 
 | ID | Recall before | Recall after | Precision before | Precision after | Delta Precision |
 |---|---:|---:|---:|---:|---:|
-| | | | | | |
-| | | | | | |
-| | | | | | |
-| | | | | | |
-| | | | | | |
-| **Avg** | | | | | |
+| E04 | 0.941 | 0.941 | 0.700 | 0.756 | +0.056 |
+| M06 | 1.000 | 1.000 | 0.887 | 0.950 | +0.062 |
+| M05 | 0.720 | 0.720 | 1.000 | 1.000 | 0.000 |
+| A03 | 0.435 | 0.435 | 0.887 | 0.804 | −0.083 |
+| A01 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
+| **Avg** | 0.619 | 0.619 | 0.695 | 0.702 | +0.007 |
+
+Extra trace (not in avg): **A02** Recall 0.950→0.950, Precision 1.000→0.806 (Δ −0.194) — injection question tokens pull non-scope chunks up.
 
 **Tại sao Recall dự kiến không đổi?**
 
 > *Câu trả lời:*
+>
+> Context Recall uses the **union** of chunk tokens: `|expected ∩ ∪chunks| / |expected|`. Reranking permutes the list; it does not add or drop chunks. Union coverage is invariant, so Recall before = Recall after on every row (including A01’s empty list). Context Precision is rank-aware AP@K, so moving a relevant chunk earlier raises Precision (E04, M06) and moving one later lowers it (A03, A02).
 
 **Khi nào reranking không đủ và cần sửa retriever/query/chunking?**
 
 > *Câu trả lời:*
+>
+> 1. **Missing evidence (Recall hole):** M05 Recall stuck at 0.720; A03 at 0.435; A01 at 0.000. No ordering can recover tokens that were never retrieved → raise top-k, query rewrite, hybrid/scope fallback, or recut chunks.
+> 2. **Query–gold mismatch:** Lexical rerank on the *question* can hurt Precision vs expected (A03, A02). Injection/false-premise queries do not look like policy answers. Need a cross-encoder, intent-specific retrieve (always include `00_system_scope.md` for OOS/traps), or rerank on a rewritten query — not raw user text.
+> 3. **Already-perfect ranking:** E01-style Precision 1.0 has no headroom; remaining errors are generation (E03 Completeness 0.235 with Recall 1.0).
+> 4. **Noise in the set:** If all five chunks are weakly related, rerank just shuffles noise. Fix chunking/filters first.
 
 ---
 
@@ -376,4 +396,4 @@ Hoàn thành kiểm tra cuối trong khoảng 11:50–12:00.
 - [x] Exercise 3.3 có rubric 1–5 và bias controls.
 - [x] `reflection.md` có ba failure analyses và regression strategy.
 - [x] Đã copy `template.py` thành `solution/solution.py`.
-- [ ] Exercise 3.4 và 3.5 chỉ làm nếu chọn bonus.
+- [x] Exercise 3.4 và 3.5 chỉ làm nếu chọn bonus.
