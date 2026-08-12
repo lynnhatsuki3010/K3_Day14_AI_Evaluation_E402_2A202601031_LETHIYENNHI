@@ -30,11 +30,11 @@ critical.
 
 | Metric | Acceptable Low Score Scenario | Critical Low Score Scenario | Action Required |
 |---|---|---|---|
-| Faithfulness | | | |
-| Answer Relevance | | | |
-| Context Recall | | | |
-| Context Precision | | | |
-| Completeness | | | |
+| Faithfulness | Adversarial / out-of-scope: assistant correctly refuses and has little lexical overlap with gold policy text (e.g. medical diagnosis request). | In-scope answer invents deadlines, fees, GPA cutoffs, or refund rates not in retrieved/gold context. | Block deploy if in-scope hallucination. Add grounding/citation guardrail; do not treat OOS refusals as faithfulness bugs. |
+| Answer Relevance | Correct policy answer that paraphrases without repeating question tokens (word-overlap heuristic under-scores). | Answer addresses a different intent (tuition vs scholarship, grade appeal vs service complaint). | Alert on paraphrase false-negatives; investigate routing/prompt if intent mismatch. Add intent check or human spot-check. |
+| Context Recall | Out-of-scope / prompt-injection cases where expected answer is a refusal and retriever need not pull full policy corpus. | Easy factual lookup misses the one document that contains the date/amount (e.g. Fall add/drop deadline). | If recall is low on Easy/Medium in-scope items: improve chunking, query rewrite, or top-k. Do not raise k blindly on adversarial items. |
+| Context Precision | Recall is high and relevant chunks appear, but some noise sits later in the ranked list. | Relevant evidence is buried while unrelated chunks rank first, so the generator sees noise first. | Rerank (Exercise 3.5) or tighten retrieval. Precision-only drops are usually alert, not block, if recall stays high. |
+| Completeness | Minor optional detail missing (office name wording) while dates, amounts, and conditions are present. | Missing a governing condition/exception (census vs after-census refund, scholarship probation vs conduct loss, policy v1 vs v2). | Iterate generation prompt / context window. Treat missing exceptions on money/deadline questions as critical, not cosmetic. |
 
 ### Exercise 1.2 — Bias trong LLM-as-a-Judge
 
@@ -47,14 +47,40 @@ Ba bias thường gặp:
 **Câu 1: Thiết kế experiment phát hiện position bias với ít nhất hai conditions.**
 
 > *Câu trả lời:*
+>
+> Dùng cùng một pair (Answer A, Answer B) trên cùng question + rubric, chỉ đổi thứ tự trình bày cho judge.
+>
+> - **Condition 1 — A first:** prompt = `[Answer A] then [Answer B]`. Record scores.
+> - **Condition 2 — B first:** prompt = `[Answer B] then [Answer A]`. Record scores.
+> - **Optional control:** randomize order across N pairs and report how often the first-listed answer wins.
+>
+> **Detection rule:** position bias exists if the first-listed answer systematically scores higher even when content is unchanged (mean score_first − score_second is significantly > 0, or win-rate of position 1 ≫ 50%). If A beats B in Condition 1 but B beats A in Condition 2, the judge is following order, not quality.
+>
+> Run the swap on both a clear-winner pair and a near-tie pair so the effect is not hidden by a huge quality gap.
 
 **Câu 2: Làm thế nào giảm verbosity bias bằng rubric design?**
 
 > *Câu trả lời:*
+>
+> Rubric phải chấm **claim quality**, không chấm độ dài:
+> 1. Mỗi mức 1–5 nêu điều kiện cụ thể (correct dates/fees, exceptions, evidence, safety) — không dùng “thorough / detailed / comprehensive” như tín hiệu điểm cao.
+> 2. **Explicit penalty:** extra sentences that do not add a grounded policy claim do not raise the score; unsupported extra claims lower Faithfulness/Correctness.
+> 3. **Reward concision when complete:** a short answer that covers all required conditions can score 5; a long answer missing an exception cannot.
+> 4. Cap or ignore stylistic filler (repeated restatements of the question).
+> 5. In pairwise judging, tell the judge to ignore length and compare only rubric dimensions.
+>
+> Example for Student Services: “USD 420 per credit, due by the regular registration deadline, 5-day grace period” scores higher than a long essay that omits the grace-period vs deadline distinction.
 
 **Câu 3: Tại sao cần calibrate LLM judge với human labels?**
 
 > *Câu trả lời:*
+>
+> LLM judges inherit model biases (position, verbosity, self-preference) and may disagree with domain experts on high-stakes Student Services cases (privacy refusals, policy versions, false premises). Calibration against a small human-labeled set:
+> - measures agreement (correlation / exact-match on 1–5);
+> - reveals systematic leniency or severity;
+> - lets you adjust rubric wording, temperature, or ensemble before using the judge as a CI gate.
+>
+> Without human calibration, a high automatic judge score can still mean “sounds like the judge model,” not “correct Northstar policy.” Calibration is especially needed when the generator and the judge share a model family.
 
 ### Exercise 1.3 — Evaluation trong CI/CD
 
@@ -62,13 +88,19 @@ Ba bias thường gặp:
 
 | Metric | Threshold | Lý do |
 |---|---:|---|
-| Faithfulness | | |
-| Answer Relevance | | |
-| Completeness | | |
+| Faithfulness | 0.70 | Hallucinated fees, deadlines, or GPA rules can cause real student harm. Below 0.70 on in-scope items = block deploy. Adversarial refusals are reviewed separately so a correct OOS refuse is not treated as a faithfulness regression. |
+| Answer Relevance | 0.60 | Intent mismatch (e.g. answering tuition when asked about scholarship renewal) is serious but slightly more recoverable than invented facts. 0.60 blocks clearly off-intent answers while allowing paraphrase that the word-overlap heuristic under-scores. |
+| Completeness | 0.60 | Missing a governing exception (after-census refund = 0%, late-add fee non-refundable) is a policy failure. 0.60 blocks large gaps; minor wording misses can alert rather than block if Faithfulness stays ≥ 0.70. |
 
 **Câu 2: Khi nào dùng offline evaluation, online evaluation và human review?**
 
 > *Câu trả lời:*
+>
+> - **Offline evaluation** (golden dataset + RAGAS-style metrics / this lab pipeline): every code, prompt, chunking, or retriever change; before demo/launch; as a CI quality gate (`run_regression` vs last baseline). Cheap, repeatable, no live students.
+> - **Online evaluation** (traces, user feedback, TruLens/Langfuse-style monitoring): after deploy, on real portal traffic — latency, refusal rate, thumbs-down, escalation to Registrar/IT. Catches distribution shift that the 20-QA golden set cannot cover.
+> - **Human review:** high-stakes or ambiguous cases — grade appeals, privacy/security, medical leave, suspected prompt injection, and any item where automatic metrics disagree or Faithfulness is borderline. Also used to calibrate the LLM-as-a-Judge rubric before trusting it in CI.
+>
+> Production flow: offline gate must pass → deploy with online monitoring → sample high-stakes traces for human review → feed new failures back into the golden dataset.
 
 ---
 
