@@ -178,31 +178,33 @@ và quyết định thiết kế, không chép lại toàn bộ QA.
 
 | Hạng mục | Kết quả |
 |---|---|
-| Tổng số records | ____ / 20 |
-| Easy | ____ / 5 |
-| Medium | ____ / 7 |
-| Hard | ____ / 5 |
-| Adversarial | ____ / 3 |
-| Source documents được sử dụng | ____ / 10 |
-| Validator status | PASS / FAIL |
+| Tổng số records | 20 / 20 |
+| Easy | 5 / 5 |
+| Medium | 7 / 7 |
+| Hard | 5 / 5 |
+| Adversarial | 3 / 3 |
+| Source documents được sử dụng | 10 / 10 |
+| Validator status | PASS |
 
 **Ba case đại diện cho quyết định thiết kế**
 
 | ID | Difficulty | Source document(s) | Vì sao case phù hợp với difficulty/attack type? |
 |---|---|---|---|
-| | | | |
-| | | | |
-| | | | |
+| E01 | easy | `01_academic_calendar.md` | Single-document factual lookup: Fall 2026 add/drop ends at 17:00 on August 28. No multi-step reasoning or exception handling. |
+| H01 | hard | `09_privacy_security_and_policy_updates.md`, `02_course_registration.md` | Policy-version trap: discussion in July does not keep v1.0; the August 3 request date triggers v2.0 (USD 40, late add only through census). Tests effective-date logic, not just a longer question. |
+| A03 | adversarial (`false_premise_or_ambiguous_trap`) | `00_system_scope.md`, `03_tuition_payment_refund.md` | User asserts a false refund rule (100% after census). Expected behavior is to refuse the premise and state the real rule (no tuition reversed after census), without inventing policy. |
 
 **Điểm khó nhất khi xây dựng expected answer hoặc evidence là gì?**
 
 > *Câu trả lời:*
+>
+> Giữ expected answer đủ điều kiện (dates, amounts, exceptions) mà không thêm kiến thức ngoài corpus, đồng thời cắt `text` đúng substring nguyên văn — punctuation, backtick grade codes (`W`, `I`), và en-dash trong `2026–2027`. Medium/Hard cần 2–3 documents nhưng mỗi claim vẫn phải map sang một đoạn evidence; nếu evidence quá dài thì noise tăng, nếu quá ngắn thì validator PASS nhưng semantic coverage yếu.
 
 **Xác nhận:**
 
-- [ ] Mọi claim trong expected answer đều có evidence hỗ trợ.
-- [ ] Không có questions trùng ý và không dùng kiến thức ngoài corpus.
-- [ ] `python validate_golden_dataset.py` báo `PASS`.
+- [x] Mọi claim trong expected answer đều có evidence hỗ trợ.
+- [x] Không có questions trùng ý và không dùng kiến thức ngoài corpus.
+- [x] `python validate_golden_dataset.py` báo `PASS`.
 
 ### Exercise 3.2 — Benchmark Run
 
